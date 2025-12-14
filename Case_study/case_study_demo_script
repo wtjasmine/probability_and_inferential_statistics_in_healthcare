@@ -1,1 +1,185 @@
 
+###############################################
+# CASE STUDY:
+# Effect of Nirmatrelvir/Ritonavir on
+# Viral Clearance Rate
+###############################################
+
+###############################################
+# 0. Setup: Load packages
+###############################################
+# dplyr   : data manipulation
+# ggplot2: visualization
+
+# Install once if needed:
+# install.packages(c("dplyr", "ggplot2"))
+
+library(dplyr)
+library(ggplot2)
+
+###############################################
+# 1. Load dataset
+###############################################
+# The dataset contains processed viral load measurements
+# for participants receiving either:
+#   - Nirmatrelvir + Ritonavir
+#   - No study drug
+
+# Adjust the path if needed (e.g., setwd() to the folder first)
+dat <- read.csv("C:/Users/USER/Downloads/nirmatrelvir_ritonavir_processed.csv")
+
+# Quick inspection of the data
+head(dat)
+
+# Ensure treatment group and detectability status
+# are treated as categorical variables
+dat <- dat %>%
+  mutate(
+    Trt = factor(Trt),
+    detect_status_day5 = factor(
+      detect_status_day5,
+      levels = c("detectable", "undetectable")
+    )
+  )
+
+###############################################
+# 2. Compute viral clearance slope
+#    slope = (Day5 − Day0) / 5  (log10 scale)
+###############################################
+# This slope summarizes the average daily change
+# in log10 viral load over the first 5 days.
+#
+# Interpretation:
+#   - More negative slope → faster viral clearance
+#   - Less negative (or positive) slope → slower clearance
+
+dat_slope <- dat %>%
+  mutate(
+    slope = (log10VL_day5 - log10VL_day0) / 5
+  )
+
+# Summary of slope distribution and sample sizes
+summary(dat_slope$slope)
+table(dat_slope$Trt)
+
+###############################################
+# 3. Visual check of slopes by treatment
+###############################################
+# Boxplots show the distribution of viral clearance slopes
+# within each treatment group.
+# Jittered points represent individual participants.
+
+ggplot(dat_slope, aes(x = Trt, y = slope)) +
+  geom_boxplot() +
+  geom_jitter(width = 0.1, alpha = 0.5) +
+  labs(
+    title = "Viral clearance slope by treatment group",
+    x = "Treatment group",
+    y = "Slope of log10 viral load ((Day5 - Day0) / 5)"
+  )
+
+###############################################
+# 4. Check t-test assumptions
+###############################################
+
+# 4.1 Normality within each group
+# The two-sample t-test assumes that the outcome
+# is approximately normally distributed within
+# each treatment group.
+
+shapiro.test(dat_slope$slope[dat_slope$Trt == "Nirmatrelvir + Ritonavir"])
+shapiro.test(dat_slope$slope[dat_slope$Trt == "No study drug"])
+
+# 4.2 Equality of variances
+# This F-test evaluates whether the variance of slopes
+# is similar between the two treatment groups.
+# If variances are equal, a pooled-variance t-test is appropriate.
+
+var.test(slope ~ Trt, data = dat_slope)
+
+###############################################
+# 5. Two-sample t-test on viral clearance slope
+###############################################
+# Null hypothesis (H0):
+#   Mean viral clearance slope is the same
+#   in both treatment groups.
+#
+# Alternative hypothesis (H1):
+#   Mean viral clearance slope differs
+#   between treatment groups.
+#
+# var.equal = TRUE assumes equal variances,
+# based on the variance test above.
+
+t_test_result <- t.test(slope ~ Trt, data = dat_slope, var.equal = TRUE)
+t_test_result
+
+
+###############################################
+# 6. Chi-square test:
+#    Detectable vs Undetectable at Day 5
+###############################################
+# This analysis evaluates whether treatment is associated
+# with viral detectability at Day 5.
+
+# Keep only rows with non-missing treatment and detection status
+dat_chi <- dat %>%
+  filter(!is.na(detect_status_day5), !is.na(Trt))
+
+# Create contingency table
+tab_detect <- table(dat_chi$Trt, dat_chi$detect_status_day5)
+tab_detect
+
+# Row-wise proportions (interpretation-friendly)
+prop.table(tab_detect, margin = 1)
+
+# Chi-square test of independence
+# H0: Treatment and detectability at Day 5 are independent
+chi_res <- chisq.test(tab_detect)
+chi_res
+
+
+###############################################
+# 7. Power calculation (two-sample t-test)
+###############################################
+# This checks whether the current sample size is
+# sufficient to achieve 80% power.
+
+library(pwr)
+
+pwr.t.test(
+  n = min(table(dat_slope$Trt)),
+  d = 0.5,
+  sig.level = 0.05,
+  type = "two.sample"
+)
+
+
+###############################################
+# 8. Confidence interval for mean slope
+###############################################
+# The t-test output includes a 95% confidence interval
+# for the difference in mean viral clearance slope
+# between treatment groups.
+
+t_test_result$conf.int
+
+
+############################################################
+# 9. Likelihood Ratio Test (LRT) for viral clearance slope
+############################################################
+# We compare:
+#   - Null model: slope does NOT depend on treatment
+#   - Full model: slope depends on treatment
+#
+# The LRT tests whether adding Treatment
+# significantly improves model fit.
+
+# Null model (intercept only)
+model_null <- lm(slope ~ 1, data = dat_slope)
+
+# Full model (includes treatment)
+model_full <- lm(slope ~ Trt, data = dat_slope)
+
+# Likelihood Ratio Test
+anova(model_null, model_full, test = "LRT")
